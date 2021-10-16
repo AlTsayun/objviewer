@@ -71,13 +71,16 @@ class ObjParser {
             .map { group ->
                 val parts = group.split("/")
                 Face.Item(
-                    vertexIx = parts[0].toIndex(size = entries.vertexes.size),
-                    textureIx = parts.getOrNull(1)
+                    vertex = parts[0].toIndex(size = entries.vertexes.size)
+                        .let { entries.vertexes[it] },
+                    texture = parts.getOrNull(1)
                         ?.takeIf { it.isNotBlank() }
-                        ?.toIndex(size = entries.textures.size),
-                    normalIx = parts.getOrNull(2)
+                        ?.toIndex(size = entries.textures.size)
+                        ?.let {entries.textures[it]} ,
+                    normal = parts.getOrNull(2)
                         ?.takeIf { it.isNotBlank() }
-                        ?.toIndex(size = entries.normals.size),
+                        ?.toIndex(size = entries.normals.size)
+                        ?.let { entries.normals[it]},
                 )
             }
             .toList()

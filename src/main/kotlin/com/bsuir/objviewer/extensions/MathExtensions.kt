@@ -1,9 +1,12 @@
 package com.bsuir.objviewer.extensions
 
+import com.bsuir.objviewer.gui.FPoint2d
+import com.bsuir.objviewer.model.ObjEntry
 import org.jetbrains.kotlinx.multik.api.mk
 import org.jetbrains.kotlinx.multik.api.ndarray
 import org.jetbrains.kotlinx.multik.ndarray.data.*
 import org.jetbrains.kotlinx.multik.ndarray.operations.div
+import org.jetbrains.kotlinx.multik.ndarray.operations.minus
 import kotlin.math.pow
 import kotlin.math.sqrt
 

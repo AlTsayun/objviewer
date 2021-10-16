@@ -1,18 +1,13 @@
 package com.bsuir.objviewer.gui
 
-import androidx.compose.desktop.AppManager
 import androidx.compose.desktop.ComposeWindow
 import androidx.compose.desktop.Window
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material.Button
 import androidx.compose.material.MaterialTheme
-import androidx.compose.material.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -20,6 +15,8 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PointMode
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.input.pointer.pointerMoveFilter
@@ -27,6 +24,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import com.bsuir.objviewer.extensions.cross
 import com.bsuir.objviewer.extensions.dot
 import com.bsuir.objviewer.extensions.normalized
+import com.bsuir.objviewer.model.Camera
 import com.bsuir.objviewer.model.ObjEntry
 import com.bsuir.objviewer.model.World
 import com.bsuir.objviewer.model.WorldObject
@@ -43,8 +41,7 @@ import java.lang.Math.toRadians
 import java.nio.file.Files
 import java.nio.file.Paths
 import java.util.UUID.randomUUID
-import kotlin.math.cos
-import kotlin.math.sin
+import kotlin.math.*
 import java.nio.file.Path as FsPath
 
 val CUBE_OBJ_CONTENT = listOf(
@@ -79,37 +76,45 @@ val PYRAMID_OBJ_CONTENT = listOf(
     "f 1 2 5",
 )
 
-fun process(vertex: ObjEntry.Vertex, modelMatrix: D2Array<Double>, world: World): F2dPoint = with(world) {
+fun process(vertex: ObjEntry.Vertex, modelMatrix: D2Array<Double>, world: World): FPoint2d = with(world) {
     val v = mk.ndarray(listOf(vertex.x, vertex.y, vertex.z, vertex.w))
 
     return (worldMatrix dot modelMatrix dot v).let {
-        F2dPoint(
+        FPoint2d(
             x = (windowSize.width - (it[0] / it[3])).toFloat(),
             y = (windowSize.height - (it[1] / it[3])).toFloat(),
         )
     }
 }
 
-data class F2dPoint(val x: Float, val y: Float)
+data class FPoint2d(val x: Float, val y: Float)
+data class FPoint3d(val x: Float, val y: Float, val z: Float)
+data class Point2d(val x: Int, val y: Int)
 
 fun main() {
-    val objEntries = ObjParser().parse(Files.readAllLines(Paths.get("C:/Users/olegg/bsuir/sem7/objviewer/cat.obj")))
+    val objParser = ObjParser()
+//        val parsed = objParser.parse(Files.readAllLines(Paths.get("./cat.obj")))
+    val parsed = objParser.parse(Files.readAllLines(Paths.get("./cat.obj")))
 
     return Window {
         MaterialTheme {
             var world by remember {
                 mutableStateOf(
                     World(
-                        camSpeed = 13.0,
-                        camPosition = mk.ndarray(listOf(0.0, 0.5, 0.0)),
+                        cam = Camera(
+                            speed = 13.0,
+                            position = mk.ndarray(listOf(0.0, 0.5, 0.0)),
+                        ),
                         objects = listOf(
-                            WorldObject(
-                                randomUUID(),
-                                objEntries.vertexes,
-                                objEntries.textures,
-                                objEntries.normals,
-                                objEntries.faces,
-                            )
+                            parsed.let {
+                                WorldObject(
+                                    randomUUID(),
+                                    it.vertexes,
+                                    it.textures,
+                                    it.normals,
+                                    it.faces,
+                                )
+                            }
                         )
                     )
                 )
@@ -150,13 +155,15 @@ fun main() {
                             if (pitch < -89.0) pitch = -89.0
 
                             world = world.copy(
-                                camFront = mk.ndarray(
-                                    listOf(
-                                        cos(toRadians(yaw)) * cos(toRadians(pitch)),
-                                        sin(toRadians(pitch)),
-                                        sin(toRadians(yaw)) * cos(toRadians(pitch)),
-                                    )
-                                ).normalized()
+                                cam = world.cam.copy(
+                                    front = mk.ndarray(
+                                        listOf(
+                                            cos(toRadians(yaw)) * cos(toRadians(pitch)),
+                                            sin(toRadians(pitch)),
+                                            sin(toRadians(yaw)) * cos(toRadians(pitch)),
+                                        )
+                                    ).normalized()
+                                )
                             )
                             return@pointerMoveFilter false
                         })
@@ -164,10 +171,12 @@ fun main() {
                         if (it.type == KeyEventType.KeyDown) {
                             with(world) {
                                 when (it.key) {
-                                    Key.W -> world = copy(camPosition = camPosition + camFront * camSpeed)
-                                    Key.S -> world = copy(camPosition = camPosition - camFront * camSpeed)
-                                    Key.A -> world = copy(camPosition = camPosition - (camFront cross camUp).normalized() * camSpeed)
-                                    Key.D -> world = copy(camPosition = camPosition + (camFront cross camUp).normalized() * camSpeed)
+                                    Key.W -> world = world.copy(cam = cam.copy(position = cam.position + cam.front * cam.speed))
+                                    Key.S -> world = world.copy(cam = cam.copy(position = cam.position - cam.front * cam.speed))
+                                    Key.A -> world = world.copy(cam =
+                                        cam.copy(position = cam.position - (cam.front cross cam.up).normalized() * cam.speed))
+                                    Key.D -> world = world.copy(cam =
+                                        cam.copy(position = cam.position + (cam.front cross cam.up).normalized() * cam.speed))
                                 }
                             }
                         }
@@ -182,20 +191,48 @@ fun main() {
                     .onSizeChanged { world = world.copy(windowSize = it) }
                 ) {
                     world.objects.forEach { worldObject ->
-                        val processedVertexes = worldObject.vertexes.map { process(it, worldObject.modelMatrix, world) }
-                        objEntries.faces.forEach { face ->
-                            val first = processedVertexes[face.items[0].vertexIx]
-                            val path = Path()
-                            path.moveTo(first.x, first.y)
+                        val processedVertexes =
+                            worldObject.vertexes.associateWith { process(it, worldObject.modelMatrix, world) }
+//                        val processedVertexes = worldObject.vertexes.parallelStream().map { process(it, worldObject.modelMatrix, world) }.toList()
+                        worldObject.faces
+//                            .filter { !isFaceTooClose(world.cam, it) }
+                            .filter { !isFaceOutOfBounds(world, processedVertexes, it) }
+                            .filter {
+                                it.items
+                                    .map { item -> item.vertex }
+                                    .forEach {
+                                        val v = mk.ndarray(listOf(it.x, it.y, it.z, it.w))
+                                        return@filter (world.projectionMatrix dot world.viewMatrix dot worldObject.modelMatrix dot v)[2] > 0
+                                }
+                                return@filter true
+                            }
+//                            .filter{ face ->
+//                            val v0 = worldObject.vertexes[face.items[0].vertexIx]
+//                            val v1 = worldObject.vertexes[face.items[1].vertexIx]
+//                            val v2 = worldObject.vertexes[face.items[2].vertexIx]
+//                            val normal = mk.ndarray(listOf(v1.x - v0.x, v1.y - v0.y, v1.y - v0.y)) cross mk.ndarray(listOf(v2.x - v1.x, v2.y - v1.y, v2.y - v1.y))
+//                            return@filter normal dot world.camTarget < 0
+//                        }
+                            .forEach { face ->
+//                            (face.items + face.items[0])
+//                                .map { processedVertexes[it.vertexIx] }
+//                                .zipWithNext()
+//                                .forEach { (v1, v2) ->
+//                                    drawLine(v1, v2)
+//                                }
 
-                            face.items
-                                .drop(1)
-                                .map { processedVertexes[it.vertexIx] }
-                                .forEach { path.lineTo(it.x, it.y) }
+                                val first = processedVertexes.getValue(face.items[0].vertex)
+                                val path = Path()
+                                path.moveTo(first.x, first.y)
 
-                            path.lineTo(first.x, first.y)
-                            drawPath(path, Color.Black, style = Stroke(width = 1f))
-                        }
+                                face.items
+                                    .drop(1)
+                                    .mapNotNull { processedVertexes[it.vertex] }
+                                    .forEach { path.lineTo(it.x, it.y) }
+
+                                path.lineTo(first.x, first.y)
+                                drawPath(path, Color.Black, style = Stroke(width = 1f))
+                            }
                     }
                 }
             }
@@ -232,7 +269,31 @@ fun main() {
     }
 }
 
-fun openFileDialog(window: ComposeWindow, title: String, allowedExtensions: List<String>, allowMultiSelection: Boolean = false): List<FsPath> {
+fun isFaceTooClose(cam: Camera, face: ObjEntry.Face): Boolean{
+    val delta = 5f.pow(2)
+    var res = false
+    for (item in face.items){
+        res = res || ((cam.position[0] - item.vertex.x).pow(2) + (cam.position[1] - item.vertex.y).pow(2) + (cam.position[1] - item.vertex.z).pow(2) < delta)
+    }
+    return res
+}
+
+fun isFaceOutOfBounds(world: World, processedVertexes: Map<ObjEntry.Vertex, FPoint2d>, face: ObjEntry.Face): Boolean {
+    var res = false
+    for (item in face.items) {
+        val processedV = processedVertexes.getValue(item.vertex)
+        res =
+            res || (processedV.x < 0 || processedV.x > world.windowSize.width || processedV.y < 0 || processedV.y > world.windowSize.height)
+    }
+    return res
+}
+
+fun openFileDialog(
+    window: ComposeWindow,
+    title: String,
+    allowedExtensions: List<String>,
+    allowMultiSelection: Boolean = false
+): List<FsPath> {
     return FileDialog(window, title, FileDialog.LOAD).apply {
         // Windows
         file = allowedExtensions.joinToString(";") { "*$it" }
@@ -248,4 +309,30 @@ fun openFileDialog(window: ComposeWindow, title: String, allowedExtensions: List
         isVisible = true
 
     }.files.map { it.toPath() }
+}
+
+fun DrawScope.drawLine(p0: Point2d, p1: Point2d) {
+    val deltaX = abs(p1.x - p0.x)
+    val deltaY = abs(p1.y - p0.y)
+    var error = 0
+    val deltaErr = (deltaY + 1)
+    var y = p0.y
+    val dirY = sign(p1.y - p0.y)
+
+    val points = ArrayList<Offset>()
+    for (x in min(p0.x, p1.x)..max(p0.x, p1.x)) {
+        points.add(Offset(x.toFloat(), y.toFloat()))
+        error += deltaErr
+        if (error >= (deltaX + 1)) {
+            y += dirY
+            error -= (deltaX + 1)
+        }
+    }
+    drawPoints(points, PointMode.Points, color = Color.Black, strokeWidth = 1f)
+}
+
+fun sign(a: Int) = when {
+    a > 0 -> 1
+    a < 0 -> -1
+    else -> 0
 }

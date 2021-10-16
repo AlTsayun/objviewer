@@ -16,26 +16,21 @@ import kotlin.math.tan
 
 data class World(
     val objects: List<WorldObject>,
-    val camSpeed: Double,
-    val camPosition: D1Array<Double>,
-    val camFront: D1Array<Double> = mk.ndarray(listOf(0.0, 0.0, -1.0)),
+    var cam: Camera,
     val windowSize: IntSize = IntSize(1, 1),
     val projectionNear: Double = 1.0,
     val projectionFar: Double = 500.0,
     val fieldOfView: Double = 5.0,
 ) {
-    val camTarget: D1Array<Double> = camPosition + camFront
-    val camUp: D1Array<Double> = mk.ndarray(listOf(0.0, 1.0, 0.0))
-
-    private val viewMatrix = run {
-        val zAxis = (camPosition - camTarget).normalized()
-        val xAxis = (camUp cross zAxis).normalized()
+    val viewMatrix = run {
+        val zAxis = (cam.position - cam.target).normalized()
+        val xAxis = (cam.up cross zAxis).normalized()
         val yAxis = (zAxis cross xAxis).normalized()
         mk.ndarray(
             listOf(
-                listOf(xAxis[0], xAxis[1], xAxis[2], -(xAxis dot camPosition)),
-                listOf(yAxis[0], yAxis[1], yAxis[2], -(yAxis dot camPosition)),
-                listOf(zAxis[0], zAxis[1], zAxis[2], -(zAxis dot camPosition)),
+                listOf(xAxis[0], xAxis[1], xAxis[2], -(xAxis dot cam.position)),
+                listOf(yAxis[0], yAxis[1], yAxis[2], -(yAxis dot cam.position)),
+                listOf(zAxis[0], zAxis[1], zAxis[2], -(zAxis dot cam.position)),
                 listOf(0.0, 0.0, 0.0, 1.0),
             )
         )
@@ -56,8 +51,8 @@ data class World(
         )
     }
 
-    private val projectionMatrix = run {
-        val aspect = windowSize.width / windowSize.height
+    val projectionMatrix = run {
+        val aspect = windowSize.width.toDouble() / windowSize.height
         mk.ndarray(
             listOf(
                 listOf(1 / (aspect * tan(fieldOfView / 2.0)), 0.0, 0.0, 0.0),
@@ -70,6 +65,14 @@ data class World(
 
     val worldMatrix = viewportMatrix dot projectionMatrix dot viewMatrix
 }
+
+data class Camera(val position: D1Array<Double>,
+                  val front: D1Array<Double> = mk.ndarray(listOf(0.0, 0.0, -1.0)),
+                  val speed: Double){
+    val up: D1Array<Double> = mk.ndarray(listOf(0.0, 1.0, 0.0))
+    val target: D1Array<Double> = position + front
+}
+
 
 data class WorldObject(
     val id: UUID,
