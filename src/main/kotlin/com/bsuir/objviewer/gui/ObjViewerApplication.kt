@@ -79,7 +79,7 @@ val PYRAMID_OBJ_CONTENT = listOf(
 fun process(vertex: ObjEntry.Vertex, modelMatrix: D2Array<Double>, world: World): FPoint2d = with(world) {
     val v = mk.ndarray(listOf(vertex.x, vertex.y, vertex.z, vertex.w))
 
-    return (worldMatrix dot modelMatrix dot v).let {
+    return (viewportMatrix dot projectionMatrix dot viewMatrix dot modelMatrix dot v).let {
         FPoint2d(
             x = (windowSize.width - (it[0] / it[3])).toFloat(),
             y = (windowSize.height - (it[1] / it[3])).toFloat(),
@@ -87,8 +87,52 @@ fun process(vertex: ObjEntry.Vertex, modelMatrix: D2Array<Double>, world: World)
     }
 }
 
+fun process(obj: WorldObject, world: World): ProcessedWorldObject = with(world) {
+    val faces = java.util.ArrayList<Face>()
+    for (face in obj.faces) {
+        var isFaceOutOfProjection = false
+        var isFacePointsOutwards = false
+        val points = java.util.ArrayList<VertexProjections>()
+        for (vertex in face.items.map { it.vertex }) {
+            val v = mk.ndarray(listOf(vertex.x, vertex.y, vertex.z, vertex.w))
+            val modelV = obj.modelMatrix dot v
+            val viewV = viewMatrix dot modelV
+            val projectionV = projectionMatrix dot viewV
+            if (projectionV[2] < 0) {
+                isFaceOutOfProjection = true
+                break
+            }
+
+            val viewportV = viewportMatrix dot projectionV
+            val point = FPoint2d(
+                x = (windowSize.width - (viewportV[0] / viewportV[3])).toFloat(),
+                y = (windowSize.height - (viewportV[1] / viewportV[3])).toFloat(),
+            )
+
+            points.add(VertexProjections(modelV, viewV, projectionV, viewportV, point))
+        }
+
+        if (!isFaceOutOfProjection) {
+            val v0 = points[0].model
+            val v1 = points[1].model
+            val v2 = points[2].model
+            val line1 = mk.ndarray(listOf(v1[0].toDouble() - v0[0], v1[1].toDouble() - v0[1], v1[2].toDouble() - v0[2]))
+            val line2 = mk.ndarray(listOf(v2[0].toDouble() - v1[0], v2[1].toDouble() - v1[1], v2[2].toDouble() - v1[2]))
+            val faceNormal = line1 cross line2
+            if (faceNormal dot (world.cam.target - world.cam.position) > 0){
+                isFacePointsOutwards = true
+            }
+        }
+
+        if (!isFaceOutOfProjection && !isFacePointsOutwards) {
+            faces.add(Face(points.map { Face.Item(it.point) }))
+        }
+
+    }
+    return ProcessedWorldObject(obj.id, faces)
+}
+
 data class FPoint2d(val x: Float, val y: Float)
-data class FPoint3d(val x: Float, val y: Float, val z: Float)
 data class Point2d(val x: Int, val y: Int)
 
 fun main() {
@@ -190,44 +234,17 @@ fun main() {
                     .fillMaxSize()
                     .onSizeChanged { world = world.copy(windowSize = it) }
                 ) {
-                    world.objects.forEach { worldObject ->
-                        val processedVertexes =
-                            worldObject.vertexes.associateWith { process(it, worldObject.modelMatrix, world) }
-//                        val processedVertexes = worldObject.vertexes.parallelStream().map { process(it, worldObject.modelMatrix, world) }.toList()
-                        worldObject.faces
-//                            .filter { !isFaceTooClose(world.cam, it) }
-                            .filter { !isFaceOutOfBounds(world, processedVertexes, it) }
-                            .filter {
-                                it.items
-                                    .map { item -> item.vertex }
-                                    .forEach {
-                                        val v = mk.ndarray(listOf(it.x, it.y, it.z, it.w))
-                                        return@filter (world.projectionMatrix dot world.viewMatrix dot worldObject.modelMatrix dot v)[2] > 0
-                                }
-                                return@filter true
-                            }
-//                            .filter{ face ->
-//                            val v0 = worldObject.vertexes[face.items[0].vertexIx]
-//                            val v1 = worldObject.vertexes[face.items[1].vertexIx]
-//                            val v2 = worldObject.vertexes[face.items[2].vertexIx]
-//                            val normal = mk.ndarray(listOf(v1.x - v0.x, v1.y - v0.y, v1.y - v0.y)) cross mk.ndarray(listOf(v2.x - v1.x, v2.y - v1.y, v2.y - v1.y))
-//                            return@filter normal dot world.camTarget < 0
-//                        }
-                            .forEach { face ->
-//                            (face.items + face.items[0])
-//                                .map { processedVertexes[it.vertexIx] }
-//                                .zipWithNext()
-//                                .forEach { (v1, v2) ->
-//                                    drawLine(v1, v2)
-//                                }
-
-                                val first = processedVertexes.getValue(face.items[0].vertex)
+                    world.objects
+                        .map { process(it, world) }
+                        .forEach { obj ->
+                            obj.faces.forEach { face ->
+                                val first = face.items[0].vertex
                                 val path = Path()
                                 path.moveTo(first.x, first.y)
 
                                 face.items
                                     .drop(1)
-                                    .mapNotNull { processedVertexes[it.vertex] }
+                                    .map { it.vertex }
                                     .forEach { path.lineTo(it.x, it.y) }
 
                                 path.lineTo(first.x, first.y)
@@ -274,16 +291,6 @@ fun isFaceTooClose(cam: Camera, face: ObjEntry.Face): Boolean{
     var res = false
     for (item in face.items){
         res = res || ((cam.position[0] - item.vertex.x).pow(2) + (cam.position[1] - item.vertex.y).pow(2) + (cam.position[1] - item.vertex.z).pow(2) < delta)
-    }
-    return res
-}
-
-fun isFaceOutOfBounds(world: World, processedVertexes: Map<ObjEntry.Vertex, FPoint2d>, face: ObjEntry.Face): Boolean {
-    var res = false
-    for (item in face.items) {
-        val processedV = processedVertexes.getValue(item.vertex)
-        res =
-            res || (processedV.x < 0 || processedV.x > world.windowSize.width || processedV.y < 0 || processedV.y > world.windowSize.height)
     }
     return res
 }

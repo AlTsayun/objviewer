@@ -36,7 +36,7 @@ data class World(
         )
     }
 
-    private val viewportMatrix = run {
+    val viewportMatrix = run {
         val windowWidth = windowSize.width.toDouble()
         val windowHeight = windowSize.height.toDouble()
         val windowXMin = 0
@@ -62,8 +62,6 @@ data class World(
             )
         )
     }
-
-    val worldMatrix = viewportMatrix dot projectionMatrix dot viewMatrix
 }
 
 data class Camera(val position: D1Array<Double>,

@@ -7,13 +7,14 @@ import org.jetbrains.kotlinx.multik.api.ndarray
 import org.jetbrains.kotlinx.multik.ndarray.data.*
 import org.jetbrains.kotlinx.multik.ndarray.operations.div
 import org.jetbrains.kotlinx.multik.ndarray.operations.minus
+import org.jetbrains.kotlinx.multik.ndarray.operations.times
 import kotlin.math.pow
 import kotlin.math.sqrt
 
-infix fun D1Array<Double>.dot(another: D1Array<Double>): Double =
+infix fun <T: Number> D1Array<T>.dot(another: D1Array<T>): T =
     mk.linalg.dot(this, another)
 
-infix fun D1Array<Double>.cross(another: D1Array<Double>): D1Array<Double> {
+inline infix fun <reified T: Number> D1Array<T>.cross(another: D1Array<T>): D1Array<T> {
     require(this.size == 3)
     require(another.size == 3)
     return mk.ndarray(
