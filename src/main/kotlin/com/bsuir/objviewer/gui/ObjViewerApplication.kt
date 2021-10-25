@@ -40,9 +40,14 @@ import java.awt.FileDialog
 import java.lang.Math.toRadians
 import java.nio.file.Files
 import java.nio.file.Paths
+import java.util.*
 import java.util.UUID.randomUUID
-import kotlin.math.*
+import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.pow
+import kotlin.math.sin
 import java.nio.file.Path as FsPath
+
 
 val CUBE_OBJ_CONTENT = listOf(
     "v 0 0 0", // 1
@@ -88,28 +93,36 @@ fun process(vertex: ObjEntry.Vertex, modelMatrix: D2Array<Double>, world: World)
 }
 
 fun process(obj: WorldObject, world: World): ProcessedWorldObject = with(world) {
-    val faces = java.util.ArrayList<Face>()
+    val faces = ArrayList<ProcessedFace>()
     for (face in obj.faces) {
         var isFaceOutOfProjection = false
         var isFacePointsOutwards = false
-        val points = java.util.ArrayList<VertexProjections>()
+        val points = ArrayList<VertexProjections>()
         for (vertex in face.items.map { it.vertex }) {
             val v = mk.ndarray(listOf(vertex.x, vertex.y, vertex.z, vertex.w))
             val modelV = obj.modelMatrix dot v
             val viewV = viewMatrix dot modelV
             val projectionV = projectionMatrix dot viewV
+            val viewportV = viewportMatrix dot projectionV
+
             if (projectionV[2] < 0) {
                 isFaceOutOfProjection = true
                 break
             }
 
-            val viewportV = viewportMatrix dot projectionV
             val point = FPoint2d(
                 x = (windowSize.width - (viewportV[0] / viewportV[3])).toFloat(),
                 y = (windowSize.height - (viewportV[1] / viewportV[3])).toFloat(),
             )
 
+            if (point.x < 0 || point.x > windowSize.width ||
+                point.y < 0 || point.y > windowSize.height) {
+                isFaceOutOfProjection = true
+                break
+            }
+
             points.add(VertexProjections(modelV, viewV, projectionV, viewportV, point))
+
         }
 
         if (!isFaceOutOfProjection) {
@@ -119,13 +132,13 @@ fun process(obj: WorldObject, world: World): ProcessedWorldObject = with(world) 
             val line1 = mk.ndarray(listOf(v1[0].toDouble() - v0[0], v1[1].toDouble() - v0[1], v1[2].toDouble() - v0[2]))
             val line2 = mk.ndarray(listOf(v2[0].toDouble() - v1[0], v2[1].toDouble() - v1[1], v2[2].toDouble() - v1[2]))
             val faceNormal = line1 cross line2
-            if (faceNormal dot (world.cam.target - world.cam.position) > 0){
+            if (faceNormal dot (world.cam.target - world.cam.position) > 0) {
                 isFacePointsOutwards = true
             }
         }
 
         if (!isFaceOutOfProjection && !isFacePointsOutwards) {
-            faces.add(Face(points.map { Face.Item(it.point) }))
+            faces.add(ProcessedFace(points.map { ProcessedFace.Item(DepthPoint2d(it.point.x.toInt(), it.point.y.toInt(), 0u)) }))
         }
 
     }
@@ -133,7 +146,10 @@ fun process(obj: WorldObject, world: World): ProcessedWorldObject = with(world) 
 }
 
 data class FPoint2d(val x: Float, val y: Float)
-data class Point2d(val x: Int, val y: Int)
+data class Point2d(val x: Int, val y: Int) {
+    constructor(point: FPoint2d) : this(point.x.toInt(), point.y.toInt())
+}
+data class DepthPoint2d(val x: Int, val y: Int, val depth: UShort)
 
 fun main() {
     val objParser = ObjParser()
@@ -215,12 +231,18 @@ fun main() {
                         if (it.type == KeyEventType.KeyDown) {
                             with(world) {
                                 when (it.key) {
-                                    Key.W -> world = world.copy(cam = cam.copy(position = cam.position + cam.front * cam.speed))
-                                    Key.S -> world = world.copy(cam = cam.copy(position = cam.position - cam.front * cam.speed))
-                                    Key.A -> world = world.copy(cam =
-                                        cam.copy(position = cam.position - (cam.front cross cam.up).normalized() * cam.speed))
-                                    Key.D -> world = world.copy(cam =
-                                        cam.copy(position = cam.position + (cam.front cross cam.up).normalized() * cam.speed))
+                                    Key.W -> world =
+                                        world.copy(cam = cam.copy(position = cam.position + cam.front * cam.speed))
+                                    Key.S -> world =
+                                        world.copy(cam = cam.copy(position = cam.position - cam.front * cam.speed))
+                                    Key.A -> world = world.copy(
+                                        cam =
+                                        cam.copy(position = cam.position - (cam.front cross cam.up).normalized() * cam.speed)
+                                    )
+                                    Key.D -> world = world.copy(
+                                        cam =
+                                        cam.copy(position = cam.position + (cam.front cross cam.up).normalized() * cam.speed)
+                                    )
                                 }
                             }
                         }
@@ -238,19 +260,11 @@ fun main() {
                         .map { process(it, world) }
                         .forEach { obj ->
                             obj.faces.forEach { face ->
-                                val first = face.items[0].vertex
-                                val path = Path()
-                                path.moveTo(first.x, first.y)
-
-                                face.items
-                                    .drop(1)
-                                    .map { it.vertex }
-                                    .forEach { path.lineTo(it.x, it.y) }
-
-                                path.lineTo(first.x, first.y)
-                                drawPath(path, Color.Black, style = Stroke(width = 1f))
+                                drawFillFace(face, Color.Gray)
+//                                drawPathFace(face, Color.Blue)
+//                                drawStrokeFace(face, Color.Black)
                             }
-                    }
+                        }
                 }
             }
 
@@ -286,11 +300,104 @@ fun main() {
     }
 }
 
-fun isFaceTooClose(cam: Camera, face: ObjEntry.Face): Boolean{
+private fun DrawScope.drawStrokeFace(face: ProcessedFace, color: Color) {
+
+    face.items
+        .pairedInCycle()
+        .forEach { pair ->
+            drawLine(pair.first.point, pair.second.point, color)
+        }
+}
+private fun DrawScope.drawPathFace(face: ProcessedFace, color: Color) {
+    val first = face.items[0].point
+    val path = Path()
+    path.moveTo(first.x.toFloat(), first.y.toFloat())
+    face.items
+        .map { it.point }
+        .forEach { path.lineTo(it.x.toFloat(), it.y.toFloat()) }
+
+    path.lineTo(first.x.toFloat(), first.y.toFloat())
+    drawPath(path, color, style = Stroke(width = 1f))
+}
+private fun DrawScope.drawFillFace(face: ProcessedFace, color: Color) {
+    val allEdges = face.items
+        .pairedInCycle()
+        .map { pair ->
+            val i1 = pair.first
+            val i2 = pair.second
+            val sorted = if (i1.point.y < i2.point.y) {
+                i1.point to i2.point
+            } else {
+                i2.point to i1.point
+            }
+            Edge(
+                sorted.first.x,
+                sorted.first.y,
+                sorted.second.y,
+                (sorted.second.x - sorted.first.x) / (sorted.second.y - sorted.first.y).toFloat()
+            )
+        }
+
+    val yComparator = compareBy<Edge> { it.minY }
+    val xComparator = compareBy<Edge> { it.minX }
+    //todo: fix comparing float to 0
+    val globalEdges = allEdges
+//        .filter { it.invSlope != 0f }
+        .sortedWith(yComparator.then(xComparator))
+
+    if (globalEdges.isNotEmpty()) {
+        for (scanLine: Int in globalEdges.first().minY..globalEdges.last().maxY){
+            val activeEdges = globalEdges
+                .filter { (it.minY <= scanLine) && (it.maxY >= scanLine) }
+                .chunked(2)
+                .filter { it.size == 2 }
+
+            activeEdges.forEach {
+                val currentX0 = getCurrentX(it[0], scanLine)
+                val currentX1 = getCurrentX(it[1], scanLine)
+                drawLine(
+                    start = Offset(x = currentX0.toFloat(), y = scanLine.toFloat()),
+                    end = Offset(x = currentX1.toFloat(), y = scanLine.toFloat()),
+                    color = color,
+                )
+            }
+        }
+    }
+
+}
+
+
+fun getCurrentX(edge: Edge, y: Int): Int{
+    return edge.minX + ((y - edge.minY) * edge.invSlope).toInt()
+}
+
+fun <T> paired(list: Collection<T>): List<Pair<T, T>> {
+    val pairs: MutableList<Pair<T, T>> = ArrayList(list.size)
+    list.stream().reduce { a: T, b: T ->
+        pairs.add(a to b)
+        return@reduce b
+    }
+    return pairs
+}
+
+fun <T> List<T>.pairedInCycle(): List<Pair<T, T>> {
+    val pairs: MutableList<Pair<T, T>> = ArrayList(this.size)
+    this.stream().reduce { a: T, b: T ->
+        pairs.add(Pair(a, b))
+        return@reduce b
+    }
+    pairs.add(Pair(this.last(), this.first()))
+    return pairs
+}
+
+fun isFaceTooClose(cam: Camera, face: ObjEntry.Face): Boolean {
     val delta = 5f.pow(2)
     var res = false
-    for (item in face.items){
-        res = res || ((cam.position[0] - item.vertex.x).pow(2) + (cam.position[1] - item.vertex.y).pow(2) + (cam.position[1] - item.vertex.z).pow(2) < delta)
+    for (item in face.items) {
+        res =
+            res || ((cam.position[0] - item.vertex.x).pow(2) + (cam.position[1] - item.vertex.y).pow(2) + (cam.position[1] - item.vertex.z).pow(
+                2
+            ) < delta)
     }
     return res
 }
@@ -318,24 +425,40 @@ fun openFileDialog(
     }.files.map { it.toPath() }
 }
 
-fun DrawScope.drawLine(p0: Point2d, p1: Point2d) {
+fun DrawScope.drawLine(p0: DepthPoint2d, p1: DepthPoint2d, color: Color) {
     val deltaX = abs(p1.x - p0.x)
     val deltaY = abs(p1.y - p0.y)
-    var error = 0
-    val deltaErr = (deltaY + 1)
-    var y = p0.y
     val dirY = sign(p1.y - p0.y)
+    val dirX = sign(p1.x - p0.x)
+    var error = 0
 
     val points = ArrayList<Offset>()
-    for (x in min(p0.x, p1.x)..max(p0.x, p1.x)) {
-        points.add(Offset(x.toFloat(), y.toFloat()))
-        error += deltaErr
-        if (error >= (deltaX + 1)) {
-            y += dirY
-            error -= (deltaX + 1)
+    if (deltaX > deltaY){
+        val deltaErr = (deltaY + 1)
+        var y = p0.y
+        for (x in p0.x..p1.x + 1) {
+            points.add(Offset(x.toFloat(), y.toFloat()))
+            error += deltaErr
+            if (error >= (deltaX + 1)) {
+                y += dirY
+                error -= (deltaX + 1)
+            }
         }
     }
-    drawPoints(points, PointMode.Points, color = Color.Black, strokeWidth = 1f)
+    else {
+        val deltaErr = (deltaX + 1)
+        var x = p0.x
+        for (y in p0.y..p1.y + 1) {
+            points.add(Offset(x.toFloat(), y.toFloat()))
+            error += deltaErr
+            if (error >= (deltaY + 1)) {
+                x += dirX
+                error -= (deltaY + 1)
+            }
+        }
+    }
+
+    drawPoints(points, PointMode.Points, color = color, strokeWidth = 1f)
 }
 
 fun sign(a: Int) = when {
@@ -343,3 +466,5 @@ fun sign(a: Int) = when {
     a < 0 -> -1
     else -> 0
 }
+
+data class Edge(val minX: Int, val minY: Int, val maxY: Int, val invSlope: Float)

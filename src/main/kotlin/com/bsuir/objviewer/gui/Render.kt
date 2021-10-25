@@ -10,11 +10,11 @@ class Render(private val world: World) {
 
 data class ProcessedWorldObject(
     val id: UUID,
-    val faces: List<Face>
+    val faces: List<ProcessedFace>
 )
 
-data class Face(val items: List<Item>) {
-    data class Item(val vertex: FPoint2d)
+data class ProcessedFace(val items: List<Item>) {
+    data class Item(val point: DepthPoint2d)
 }
 
 data class VertexProjections(
