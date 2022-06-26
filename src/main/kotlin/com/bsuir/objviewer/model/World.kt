@@ -65,7 +65,7 @@ data class World(
 }
 
 data class Camera(val position: D1Array<Double>,
-                  val front: D1Array<Double> = mk.ndarray(listOf(0.0, 0.0, -1.0)),
+                  val front: D1Array<Double> = mk.ndarray(listOf(1.0, 0.0, 0.0)),
                   val speed: Double){
     val up: D1Array<Double> = mk.ndarray(listOf(0.0, 1.0, 0.0))
     val target: D1Array<Double> = position + front
